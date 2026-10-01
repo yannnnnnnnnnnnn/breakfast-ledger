@@ -75,18 +75,11 @@
 <div class="loading" id="loadingScreen">資料載入中…</div>
 <div class="auth" id="authOverlay" hidden>
   <form class="auth-card" id="authForm">
-    <h2 id="authTitle">登入早餐店記帳本</h2>
-    <p id="authDesc">登入後，資料會在手機、平板、電腦之間自動同步。</p>
-    <div><label for="authEmail">電子郵件</label><input id="authEmail" type="email" autocomplete="email" required></div>
-    <div><label for="authPassword" id="authPasswordLabel">密碼</label><input id="authPassword" type="password" autocomplete="current-password" minlength="6" required></div>
-    <div><label for="authPassword2">再輸入一次密碼</label><input id="authPassword2" type="password" autocomplete="new-password" minlength="6" required></div>
-    <button type="submit" id="authSubmit">登入</button>
+    <h2>早餐店記帳本</h2>
+    <p>請輸入店內共用密碼。輸入一次後，這台裝置會記住。</p>
+    <label for="authPassword">密碼</label><input id="authPassword" type="password" autocomplete="current-password" required>
+    <button type="submit" id="authSubmit">進入記帳本</button>
     <p class="auth-msg" id="authMsg" role="alert"></p>
-    <div class="auth-links">
-      <button type="button" class="link" id="toForgot">忘記密碼？</button>
-      <button type="button" class="link" id="toSignup">建立新帳號</button>
-      <button type="button" class="link" id="toLogin" hidden>← 返回登入</button>
-    </div>
   </form>
 </div>
 <main>
@@ -148,247 +141,164 @@
     </div>
   </section>
 </main><div class="toast" id="toast"></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script>
-/* ===== Supabase 設定：請換成你自己專案的值（Project Settings → API） ===== */
-const SUPABASE_URL = "https://gvivuprejqjqwthfphoq.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2aXZ1cHJlanFqcXd0aGZwaG9xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5NDMwMjcsImV4cCI6MjEwNTUxOTAyN30.ihLGrs8n9M3LJKSOTldPWv2lKMHzZ031fGvWMubyn-o";
+/* ===== Google 試算表設定：貼上 Apps Script「網頁應用程式」的部署網址 ===== */
+const SHEETS_API_URL = "";
 
-/* ===== 雲端同步模組 ===== */
+/* ===== 雲端同步模組（Google 試算表） ===== */
 window.Cloud = (() => {
-  const K = { rec: "breakfast-ledger-records", set: "breakfast-ledger-settings", synced: "breakfast-ledger-synced", setSynced: "breakfast-ledger-settings-synced", owner: "breakfast-ledger-owner" };
+  const K = { rec: "breakfast-ledger-records", set: "breakfast-ledger-settings", synced: "breakfast-ledger-synced", setSynced: "breakfast-ledger-settings-synced", owner: "breakfast-ledger-owner", pass: "breakfast-ledger-passcode" };
   const $ = id => document.getElementById(id);
   const canon = v => Array.isArray(v) ? "[" + v.map(canon).join(",") + "]"
     : v && typeof v === "object" ? "{" + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}"
     : JSON.stringify(v);
   const readJSON = (k, f) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : f; } catch { return f; } };
   const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.error(e); } };
-  const configured = !SUPABASE_URL.includes("YOUR-") && !SUPABASE_ANON_KEY.includes("YOUR-");
-  let setupMissing = false, client = null, user = null, listener = null, synced = {}, settingsSynced = null, chain = Promise.resolve(), timer = null;
+  const configured = /^https?:\/\//.test(SHEETS_API_URL);
+  let passcode = null, connected = false, listener = null, synced = {}, settingsSynced = null, chain = Promise.resolve(), timer = null, version = null;
 
   function setStatus(text, state) { const el = $("syncStatus"); if (el) { el.textContent = text; el.dataset.state = state || ""; } }
+  const offlineText = () => navigator.onLine ? "同步失敗，稍後重試" : "離線中，連線後同步";
 
-  function authError(error) {
-    const m = (error && error.message) || "";
-    if (/invalid login/i.test(m)) return "電子郵件或密碼錯誤";
-    if (/not confirmed/i.test(m)) return "這個帳號還沒驗證，請先到信箱點擊驗證連結";
-    if (/rate limit|too many/i.test(m)) return "寄信或嘗試次數太多，請約一小時後再試";
-    if (/already (been )?registered|already exists/i.test(m)) return "這個 Email 已經註冊過，請直接登入";
-    if (/should be different|same as/i.test(m)) return "新密碼不能和舊密碼相同";
-    if (/password should|at least 6/i.test(m)) return "密碼至少需要 6 碼";
-    if (/email/i.test(m) && /invalid|valid/i.test(m)) return "Email 格式不正確";
-    if (/failed to fetch|network|load failed/i.test(m)) return "網路連線失敗，請確認網路後再試";
-    return "發生錯誤：" + m;
+  async function api(action, extra) {
+    const res = await fetch(SHEETS_API_URL, { method: "POST", body: JSON.stringify(Object.assign({ action, passcode }, extra || {})) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (!data.ok) { const err = new Error(data.error || "error"); err.code = data.error; throw err; }
+    return data;
   }
 
-  const MODES = {
-    login:  { title: "登入早餐店記帳本", desc: "登入後，資料會在手機、平板、電腦之間自動同步。", submit: "登入", fields: ["email", "password"], pwLabel: "密碼", pwAuto: "current-password" },
-    signup: { title: "建立新帳號", desc: "建立後會寄出驗證信，點信中的連結就能開始使用。", submit: "建立帳號", fields: ["email", "password", "password2"], pwLabel: "密碼（至少 6 碼）", pwAuto: "new-password" },
-    forgot: { title: "忘記密碼", desc: "輸入註冊時的 Email，會寄出重設密碼的連結。", submit: "寄送重設密碼信", fields: ["email"] },
-    reset:  { title: "設定新密碼", desc: "輸入新的密碼，完成後會自動登入。", submit: "更新密碼", fields: ["password", "password2"], pwLabel: "新密碼（至少 6 碼）", pwAuto: "new-password" }
-  };
-
-  function showAuth(startMode, startMsg) {
+  function showPasscode(text) {
     return new Promise(resolve => {
-      const here = location.origin + location.pathname;
-      const f = { email: $("authEmail"), password: $("authPassword"), password2: $("authPassword2") };
-      const msg = (t, ok) => { $("authMsg").textContent = t || ""; $("authMsg").classList.toggle("ok", !!ok); };
-      let mode;
-      const setMode = (m, text, ok) => {
-        mode = m; const c = MODES[m];
-        $("authTitle").textContent = c.title; $("authDesc").textContent = c.desc; $("authSubmit").textContent = c.submit;
-        Object.entries(f).forEach(([k, el]) => { const on = c.fields.includes(k); el.parentElement.hidden = !on; el.disabled = !on; });
-        if (c.pwLabel) { $("authPasswordLabel").textContent = c.pwLabel; f.password.autocomplete = c.pwAuto; }
-        f.password.value = ""; f.password2.value = "";
-        $("toForgot").hidden = $("toSignup").hidden = m !== "login";
-        $("toLogin").hidden = m === "login" || m === "reset";
-        msg(text, ok);
-      };
-      const done = session => { $("authOverlay").hidden = true; $("loadingScreen").hidden = false; resolve(session); };
-      $("toForgot").onclick = () => setMode("forgot");
-      $("toSignup").onclick = () => setMode("signup");
-      $("toLogin").onclick = () => setMode("login");
-      $("authForm").onsubmit = async e => {
-        e.preventDefault();
-        const email = f.email.value.trim(), password = f.password.value;
-        if (MODES[mode].fields.includes("password2") && password !== f.password2.value) return msg("兩次輸入的密碼不一樣");
-        const btn = $("authSubmit"); btn.disabled = true;
-        try {
-          if (mode === "login") {
-            msg("登入中…");
-            const { data, error } = await client.auth.signInWithPassword({ email, password });
-            if (error) return msg(authError(error));
-            done(data.session);
-          } else if (mode === "signup") {
-            msg("建立帳號中…");
-            const { data, error } = await client.auth.signUp({ email, password, options: { emailRedirectTo: here } });
-            if (error) return msg(authError(error));
-            if (data.session) done(data.session);
-            else setMode("login", "驗證信已寄出，請到信箱點擊連結後，再回來登入。", true);
-          } else if (mode === "forgot") {
-            msg("寄送中…");
-            const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: here });
-            if (error) return msg(authError(error));
-            msg("重設密碼信已寄出，請到信箱點擊連結（可能在垃圾郵件匣）。", true);
-          } else if (mode === "reset") {
-            msg("更新中…");
-            const { error } = await client.auth.updateUser({ password });
-            if (error) return msg(authError(error));
-            const { data: { session } } = await client.auth.getSession();
-            if (session) done(session); else setMode("login", "密碼已更新，請用新密碼登入。", true);
-          }
-        } catch (err) { msg(authError(err)); }
-        finally { btn.disabled = false; }
-      };
       $("loadingScreen").hidden = true;
       $("authOverlay").hidden = false;
-      setMode(startMode, startMsg);
+      $("authMsg").textContent = text || "";
+      $("authPassword").value = "";
+      $("authForm").onsubmit = async e => {
+        e.preventDefault();
+        const value = $("authPassword").value.trim();
+        if (!value) return;
+        const btn = $("authSubmit"); btn.disabled = true;
+        $("authMsg").textContent = "確認中…";
+        passcode = value;
+        try {
+          const data = await api("version");
+          $("authOverlay").hidden = true; $("loadingScreen").hidden = false;
+          resolve(data);
+        } catch (err) {
+          $("authMsg").textContent = err.code === "wrong_passcode" ? "密碼錯誤，請再試一次" : err.code === "passcode_not_set" ? "試算表程式還沒設定密碼（請修改 Code.gs 的 PASSCODE）" : "無法連線，請確認網路後再試";
+        } finally { btn.disabled = false; }
+      };
     });
   }
 
   async function pull() {
-    const rows = [];
-    for (let from = 0; ; from += 1000) {
-      const { data, error } = await client.from("shared_records").select("id,data").order("id").range(from, from + 999);
-      if (error) throw error;
-      rows.push(...data);
-      if (data.length < 1000) break;
-    }
-    const { data: s, error: se } = await client.from("shared_settings").select("data").eq("id", "main").maybeSingle();
-    if (se) throw se;
-    const records = rows.map(r => r.data);
+    const data = await api("load");
+    const records = data.records || [];
     synced = {}; records.forEach(r => synced[r.id] = canon(r));
     writeJSON(K.synced, synced); writeJSON(K.rec, records);
-    if (s && s.data) { writeJSON(K.set, s.data); settingsSynced = canon(s.data); localStorage.setItem(K.setSynced, settingsSynced); }
-    return { records, settings: s ? s.data : null };
+    if (data.settings) { writeJSON(K.set, data.settings); settingsSynced = canon(data.settings); localStorage.setItem(K.setSynced, settingsSynced); }
+    version = data.version;
+    return { records, settings: data.settings };
   }
 
-  // 只上傳有變動的資料（新增／修改），並刪除雲端上已在本機刪除的資料
+  // 只送出有變動的資料（新增／修改／刪除）
   function pushNow() {
     chain = chain.catch(() => {}).then(async () => {
-      if (!client || !user) return;
+      if (!connected) return;
       const records = readJSON(K.rec, []), settings = readJSON(K.set, null);
       const current = {}; records.forEach(r => current[r.id] = canon(r));
-      const ups = records.filter(r => synced[r.id] !== current[r.id]);
-      const dels = Object.keys(synced).filter(id => !(id in current));
-      const now = new Date().toISOString();
-      for (let i = 0; i < ups.length; i += 500) {
-        const chunk = ups.slice(i, i + 500);
-        const { error } = await client.from("shared_records").upsert(chunk.map(r => ({ id: r.id, data: r, updated_by: user.id, updated_at: now })), { onConflict: "id" });
-        if (error) throw error;
-        chunk.forEach(r => synced[r.id] = current[r.id]); writeJSON(K.synced, synced);
-      }
-      for (let i = 0; i < dels.length; i += 200) {
-        const chunk = dels.slice(i, i + 200);
-        const { error } = await client.from("shared_records").delete().in("id", chunk);
-        if (error) throw error;
-        chunk.forEach(id => delete synced[id]); writeJSON(K.synced, synced);
-      }
-      if (settings) {
-        const c = canon(settings);
-        if (c !== settingsSynced) {
-          const { error } = await client.from("shared_settings").upsert({ id: "main", data: settings, updated_by: user.id, updated_at: now });
-          if (error) throw error;
-          settingsSynced = c; localStorage.setItem(K.setSynced, c);
-        }
-      }
+      const upserts = records.filter(r => synced[r.id] !== current[r.id]);
+      const deletes = Object.keys(synced).filter(id => !(id in current));
+      const settingsChanged = settings && canon(settings) !== settingsSynced;
+      if (!upserts.length && !deletes.length && !settingsChanged) return;
+      const data = await api("sync", { upserts, deletes, settings: settingsChanged ? settings : undefined });
+      upserts.forEach(r => synced[r.id] = current[r.id]);
+      deletes.forEach(id => delete synced[id]);
+      writeJSON(K.synced, synced);
+      if (settingsChanged) { settingsSynced = canon(settings); localStorage.setItem(K.setSynced, settingsSynced); }
+      const othersChanged = version !== null && data.version !== version + 1;
+      version = data.version;
+      if (othersChanged) setTimeout(refresh, 0);
     });
     return chain;
   }
 
   function schedule() {
-    if (!client || !user) return;
+    if (!connected) return;
     clearTimeout(timer);
     setStatus("同步中…", "busy");
     timer = setTimeout(async () => {
       try { await pushNow(); setStatus("已同步", "ok"); }
-      catch (e) { console.error(e); setStatus(navigator.onLine ? "同步失敗，稍後重試" : "離線中，連線後同步", "error"); }
-    }, 400);
+      catch (e) { console.error(e); setStatus(offlineText(), "error"); }
+    }, 600);
   }
 
+  let refreshing = false;
   async function refresh() {
-    if (!client || !user) return;
+    if (!connected || refreshing) return;
+    refreshing = true;
     try { await pushNow(); const d = await pull(); listener && listener({ full: d }); setStatus("已同步", "ok"); }
-    catch (e) { console.error(e); setStatus(navigator.onLine ? "同步失敗，稍後重試" : "離線中，連線後同步", "error"); }
+    catch (e) { console.error(e); setStatus(offlineText(), "error"); }
+    finally { refreshing = false; }
   }
 
-  function subscribe() {
-    const onRow = p => {
-      const r = p.new && p.new.data; if (!r) return;
-      synced[r.id] = canon(r); writeJSON(K.synced, synced);
-      listener && listener({ upsert: r });
-    };
-    client.channel("shared-ledger")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "shared_records" }, onRow)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "shared_records" }, onRow)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "shared_records" }, p => {
-        const id = p.old && p.old.id; if (!id) return;
-        delete synced[id]; writeJSON(K.synced, synced);
-        listener && listener({ deleteId: id });
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "shared_settings", filter: "id=eq.main" }, p => {
-        if (!p.new || !p.new.data) return;
-        settingsSynced = canon(p.new.data); localStorage.setItem(K.setSynced, settingsSynced);
-        listener && listener({ settings: p.new.data });
-      })
-      .subscribe();
+  async function checkForUpdates() {
+    if (!connected || document.visibilityState !== "visible" || !navigator.onLine) return;
+    try { const d = await api("version"); if (d.version !== version) refresh(); }
+    catch (e) { console.error(e); }
   }
 
   async function ready() {
     try {
-      if (!configured) { setStatus("僅存本機（尚未設定 Supabase）", ""); return; }
-      if (!window.supabase) { setStatus("無法連線同步服務，暫存本機", "error"); return; }
-      client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-      const hash = location.hash;
-      let recovery = /type=recovery/.test(hash);
-      const linkExpired = /error_code=otp_expired|error=access_denied/.test(hash);
-      client.auth.onAuthStateChange(event => { if (event === "PASSWORD_RECOVERY") recovery = true; });
-      let { data: { session } } = await client.auth.getSession();
-      if (hash) history.replaceState(null, "", location.pathname + location.search);
-      if (session && recovery) session = await showAuth("reset");
-      let loginMsg = linkExpired ? "信中的連結已過期或已使用過，請重新申請。" : "";
-      // 確認這個帳號在共用帳本的成員名單內
-      while (true) {
-        if (!session) session = await showAuth("login", loginMsg);
-        const { data: isMember, error } = await client.rpc("is_ledger_member");
-        if (error) { console.error(error); if (error.code === "PGRST202") setupMissing = true; break; }
-        if (isMember) break;
-        const email = session.user.email;
-        await client.auth.signOut();
-        session = null;
-        loginMsg = `「${email}」還沒有加入共用帳本，請先在 Supabase 把這個帳號加入成員名單。`;
+      if (!configured) { setStatus("僅存本機（尚未連結試算表）", ""); return; }
+      if (localStorage.getItem(K.owner) !== SHEETS_API_URL) {
+        [K.rec, K.set, K.synced, K.setSynced, K.pass].forEach(k => localStorage.removeItem(k));
       }
-      user = session.user;
-      $("logoutBtn").hidden = false;
-      const owner = localStorage.getItem(K.owner);
-      if (owner && owner !== user.id) [K.rec, K.set, K.synced, K.setSynced].forEach(k => localStorage.removeItem(k));
-      localStorage.setItem(K.owner, user.id);
+      passcode = localStorage.getItem(K.pass);
+      if (passcode) {
+        try { await api("version"); }
+        catch (err) {
+          if (err.code === "wrong_passcode") passcode = null;
+          else if (err.code === "passcode_not_set") { setStatus("試算表程式尚未設定密碼", "error"); return; }
+          else { setStatus(offlineText(), "error"); connected = true; startWatching(); return; } // 離線：先用本機資料
+        }
+      }
+      if (!passcode) await showPasscode(localStorage.getItem(K.pass) ? "密碼已變更，請重新輸入" : "");
+      localStorage.setItem(K.pass, passcode);
+      localStorage.setItem(K.owner, SHEETS_API_URL);
       synced = readJSON(K.synced, {}); settingsSynced = localStorage.getItem(K.setSynced);
+      connected = true;
+      $("logoutBtn").hidden = false;
       setStatus("同步中…", "busy");
       try { await pushNow(); await pull(); setStatus("已同步", "ok"); }
-      catch (e) { console.error(e); setStatus(setupMissing ? "尚未建立共用帳本（請執行 SQL）" : "同步失敗，暫存本機", "error"); }
-      subscribe();
-      window.addEventListener("online", refresh);
-      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
-      $("logoutBtn").onclick = async () => {
-        if (!confirm("確定要登出？雲端資料會保留，本機暫存會清除。")) return;
-        setStatus("同步中…", "busy");
-        try { await pushNow(); setStatus("已同步", "ok"); }
-        catch (e) {
-          console.error(e); setStatus("同步失敗，暫存本機", "error");
-          alert("還有資料沒有同步到雲端，為了避免資料遺失，現在不能登出。\n\n請確認網路連線，等右上角顯示「已同步」後再登出。");
-          return;
-        }
-        await client.auth.signOut();
-        [K.rec, K.set, K.synced, K.setSynced, K.owner].forEach(k => localStorage.removeItem(k));
-        location.reload();
-      };
+      catch (e) { console.error(e); setStatus(offlineText(), "error"); }
+      startWatching();
     } catch (e) {
-      console.error(e); setStatus("同步服務錯誤，暫存本機", "error");
+      console.error(e); setStatus("連線錯誤，暫存本機", "error");
     } finally {
       $("loadingScreen").hidden = true;
     }
+  }
+
+  function startWatching() {
+    $("logoutBtn").hidden = false;
+    setInterval(checkForUpdates, 30000);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkForUpdates(); });
+    $("logoutBtn").onclick = async () => {
+      if (!confirm("確定要登出？試算表裡的資料會保留，這台裝置的暫存會清除。")) return;
+      setStatus("同步中…", "busy");
+      try { await pushNow(); setStatus("已同步", "ok"); }
+      catch (e) {
+        console.error(e); setStatus(offlineText(), "error");
+        alert("還有資料沒有存進試算表，為了避免資料遺失，現在不能登出。\n\n請確認網路連線，等右上角顯示「已同步」後再登出。");
+        return;
+      }
+      [K.rec, K.set, K.synced, K.setSynced, K.owner, K.pass].forEach(k => localStorage.removeItem(k));
+      location.reload();
+    };
   }
 
   return { ready, push: schedule, onChange: fn => listener = fn };
