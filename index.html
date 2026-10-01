@@ -61,7 +61,9 @@
     .auth-card{width:100%;max-width:380px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:22px;display:grid;gap:6px}
     .auth-card h2{margin:0;font-size:19px}.auth-card p{margin:0 0 8px;color:var(--muted);font-size:13px}
     .auth-card label{margin:6px 0 0}.auth-card button{height:44px;margin-top:6px}
-    .auth-card .auth-msg{min-height:1.4em;margin:4px 0 0;color:var(--red)}
+    .auth-card .auth-msg{min-height:1.4em;margin:4px 0 0;color:var(--red)}.auth-card .auth-msg.ok{color:var(--green)}
+    .auth-links{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+    .auth-card .link{background:none;color:var(--green);padding:4px 0;height:auto;margin:0;font-weight:600;font-size:14px}
     .loading{position:fixed;inset:0;z-index:90;background:var(--cream);display:flex;align-items:center;justify-content:center;color:var(--muted)}
   </style>
 </head>
@@ -71,13 +73,18 @@
 <div class="loading" id="loadingScreen">資料載入中…</div>
 <div class="auth" id="authOverlay" hidden>
   <form class="auth-card" id="authForm">
-    <h2>登入早餐店記帳本</h2>
-    <p>登入後，資料會在手機、平板、電腦之間自動同步。</p>
-    <label for="authEmail">電子郵件</label><input id="authEmail" type="email" autocomplete="email" required>
-    <label for="authPassword">密碼（至少 6 碼）</label><input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
-    <button type="submit">登入</button>
-    <button type="button" class="secondary" id="signupBtn">建立新帳號</button>
+    <h2 id="authTitle">登入早餐店記帳本</h2>
+    <p id="authDesc">登入後，資料會在手機、平板、電腦之間自動同步。</p>
+    <div><label for="authEmail">電子郵件</label><input id="authEmail" type="email" autocomplete="email" required></div>
+    <div><label for="authPassword" id="authPasswordLabel">密碼</label><input id="authPassword" type="password" autocomplete="current-password" minlength="6" required></div>
+    <div><label for="authPassword2">再輸入一次密碼</label><input id="authPassword2" type="password" autocomplete="new-password" minlength="6" required></div>
+    <button type="submit" id="authSubmit">登入</button>
     <p class="auth-msg" id="authMsg" role="alert"></p>
+    <div class="auth-links">
+      <button type="button" class="link" id="toForgot">忘記密碼？</button>
+      <button type="button" class="link" id="toSignup">建立新帳號</button>
+      <button type="button" class="link" id="toLogin" hidden>← 返回登入</button>
+    </div>
   </form>
 </div>
 <main>
@@ -159,26 +166,81 @@ window.Cloud = (() => {
 
   function setStatus(text, state) { const el = $("syncStatus"); if (el) { el.textContent = text; el.dataset.state = state || ""; } }
 
-  function showLogin() {
+  function authError(error) {
+    const m = (error && error.message) || "";
+    if (/invalid login/i.test(m)) return "電子郵件或密碼錯誤";
+    if (/not confirmed/i.test(m)) return "這個帳號還沒驗證，請先到信箱點擊驗證連結";
+    if (/rate limit|too many/i.test(m)) return "寄信或嘗試次數太多，請約一小時後再試";
+    if (/already (been )?registered|already exists/i.test(m)) return "這個 Email 已經註冊過，請直接登入";
+    if (/should be different|same as/i.test(m)) return "新密碼不能和舊密碼相同";
+    if (/password should|at least 6/i.test(m)) return "密碼至少需要 6 碼";
+    if (/email/i.test(m) && /invalid|valid/i.test(m)) return "Email 格式不正確";
+    if (/failed to fetch|network|load failed/i.test(m)) return "網路連線失敗，請確認網路後再試";
+    return "發生錯誤：" + m;
+  }
+
+  const MODES = {
+    login:  { title: "登入早餐店記帳本", desc: "登入後，資料會在手機、平板、電腦之間自動同步。", submit: "登入", fields: ["email", "password"], pwLabel: "密碼", pwAuto: "current-password" },
+    signup: { title: "建立新帳號", desc: "建立後會寄出驗證信，點信中的連結就能開始使用。", submit: "建立帳號", fields: ["email", "password", "password2"], pwLabel: "密碼（至少 6 碼）", pwAuto: "new-password" },
+    forgot: { title: "忘記密碼", desc: "輸入註冊時的 Email，會寄出重設密碼的連結。", submit: "寄送重設密碼信", fields: ["email"] },
+    reset:  { title: "設定新密碼", desc: "輸入新的密碼，完成後會自動登入。", submit: "更新密碼", fields: ["password", "password2"], pwLabel: "新密碼（至少 6 碼）", pwAuto: "new-password" }
+  };
+
+  function showAuth(startMode, startMsg) {
     return new Promise(resolve => {
+      const here = location.origin + location.pathname;
+      const f = { email: $("authEmail"), password: $("authPassword"), password2: $("authPassword2") };
+      const msg = (t, ok) => { $("authMsg").textContent = t || ""; $("authMsg").classList.toggle("ok", !!ok); };
+      let mode;
+      const setMode = (m, text, ok) => {
+        mode = m; const c = MODES[m];
+        $("authTitle").textContent = c.title; $("authDesc").textContent = c.desc; $("authSubmit").textContent = c.submit;
+        Object.entries(f).forEach(([k, el]) => { const on = c.fields.includes(k); el.parentElement.hidden = !on; el.disabled = !on; });
+        if (c.pwLabel) { $("authPasswordLabel").textContent = c.pwLabel; f.password.autocomplete = c.pwAuto; }
+        f.password.value = ""; f.password2.value = "";
+        $("toForgot").hidden = $("toSignup").hidden = m !== "login";
+        $("toLogin").hidden = m === "login" || m === "reset";
+        msg(text, ok);
+      };
+      const done = session => { $("authOverlay").hidden = true; $("loadingScreen").hidden = false; resolve(session); };
+      $("toForgot").onclick = () => setMode("forgot");
+      $("toSignup").onclick = () => setMode("signup");
+      $("toLogin").onclick = () => setMode("login");
+      $("authForm").onsubmit = async e => {
+        e.preventDefault();
+        const email = f.email.value.trim(), password = f.password.value;
+        if (MODES[mode].fields.includes("password2") && password !== f.password2.value) return msg("兩次輸入的密碼不一樣");
+        const btn = $("authSubmit"); btn.disabled = true;
+        try {
+          if (mode === "login") {
+            msg("登入中…");
+            const { data, error } = await client.auth.signInWithPassword({ email, password });
+            if (error) return msg(authError(error));
+            done(data.session);
+          } else if (mode === "signup") {
+            msg("建立帳號中…");
+            const { data, error } = await client.auth.signUp({ email, password, options: { emailRedirectTo: here } });
+            if (error) return msg(authError(error));
+            if (data.session) done(data.session);
+            else setMode("login", "驗證信已寄出，請到信箱點擊連結後，再回來登入。", true);
+          } else if (mode === "forgot") {
+            msg("寄送中…");
+            const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: here });
+            if (error) return msg(authError(error));
+            msg("重設密碼信已寄出，請到信箱點擊連結（可能在垃圾郵件匣）。", true);
+          } else if (mode === "reset") {
+            msg("更新中…");
+            const { error } = await client.auth.updateUser({ password });
+            if (error) return msg(authError(error));
+            const { data: { session } } = await client.auth.getSession();
+            if (session) done(session); else setMode("login", "密碼已更新，請用新密碼登入。", true);
+          }
+        } catch (err) { msg(authError(err)); }
+        finally { btn.disabled = false; }
+      };
       $("loadingScreen").hidden = true;
       $("authOverlay").hidden = false;
-      const msg = t => $("authMsg").textContent = t;
-      const creds = () => ({ email: $("authEmail").value.trim(), password: $("authPassword").value });
-      const done = session => { $("authOverlay").hidden = true; $("loadingScreen").hidden = false; resolve(session); };
-      $("authForm").onsubmit = async e => {
-        e.preventDefault(); msg("登入中…");
-        const { data, error } = await client.auth.signInWithPassword(creds());
-        if (error) return msg(/invalid login/i.test(error.message) ? "電子郵件或密碼錯誤" : /not confirmed/i.test(error.message) ? "請先到信箱點擊驗證連結" : "登入失敗：" + error.message);
-        done(data.session);
-      };
-      $("signupBtn").onclick = async () => {
-        if (!$("authForm").reportValidity()) return;
-        msg("建立帳號中…");
-        const { data, error } = await client.auth.signUp({ ...creds(), options: { emailRedirectTo: location.origin + location.pathname } });
-        if (error) return msg("建立失敗：" + error.message);
-        if (data.session) done(data.session); else msg("已寄出驗證信，請到信箱點連結後回來登入。");
-      };
+      setMode(startMode, startMsg);
     });
   }
 
@@ -275,8 +337,14 @@ window.Cloud = (() => {
       if (!configured) { setStatus("僅存本機（尚未設定 Supabase）", ""); return; }
       if (!window.supabase) { setStatus("無法連線同步服務，暫存本機", "error"); return; }
       client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const hash = location.hash;
+      let recovery = /type=recovery/.test(hash);
+      const linkExpired = /error_code=otp_expired|error=access_denied/.test(hash);
+      client.auth.onAuthStateChange(event => { if (event === "PASSWORD_RECOVERY") recovery = true; });
       let { data: { session } } = await client.auth.getSession();
-      if (!session) session = await showLogin();
+      if (hash) history.replaceState(null, "", location.pathname + location.search);
+      if (session && recovery) session = await showAuth("reset");
+      if (!session) session = await showAuth("login", linkExpired ? "信中的連結已過期或已使用過，請重新申請。" : "", false);
       user = session.user;
       $("logoutBtn").hidden = false;
       const owner = localStorage.getItem(K.owner);
