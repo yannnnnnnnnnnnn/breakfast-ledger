@@ -62,6 +62,8 @@
     .auth-card h2{margin:0;font-size:19px}.auth-card p{margin:0 0 8px;color:var(--muted);font-size:13px}
     .auth-card label{margin:6px 0 0}.auth-card button{height:44px;margin-top:6px}
     .auth-card .auth-msg{min-height:1.4em;margin:4px 0 0;color:var(--red)}.auth-card .auth-msg.ok{color:var(--green)}
+    .backup-actions{display:flex;gap:8px;flex-wrap:wrap}
+    @media(max-width:480px){.toolbar .backup-actions button{width:auto;flex:1 1 0}}
     .auth-links{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
     .auth-card .link{background:none;color:var(--green);padding:4px 0;height:auto;margin:0;font-weight:600;font-size:14px}
     .loading{position:fixed;inset:0;z-index:90;background:var(--cream);display:flex;align-items:center;justify-content:center;color:var(--muted)}
@@ -88,7 +90,7 @@
   </form>
 </div>
 <main>
-  <div class="toolbar"><div><label for="month">月報月份</label><input class="month" id="month" type="month"></div><div><button class="secondary" id="exportSummary">匯出累積總結餘</button></div></div>
+  <div class="toolbar"><div><label for="month">月報月份</label><input class="month" id="month" type="month"></div><div class="backup-actions"><button type="button" class="secondary" id="exportBackup">下載完整備份</button><button type="button" class="secondary" id="importBackup">匯入備份</button><input type="file" id="importFile" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden></div></div>
   <section class="cards">
     <div class="card"><span>收入總額</span><strong id="incomeTotal">$0</strong></div>
     <div class="card"><span>支出總額（含平台抽成）</span><strong id="expenseTotal">$0</strong></div>
@@ -147,6 +149,7 @@
   </section>
 </main><div class="toast" id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script>
 /* ===== Supabase 設定：請換成你自己專案的值（Project Settings → API） ===== */
 const SUPABASE_URL = "https://gvivuprejqjqwthfphoq.supabase.co";
@@ -633,18 +636,148 @@ window.Cloud = (() => {
     const rows = [["日期","類型","分類","金額","平台","備註"], ...list.map(r => [r.date, r.type === "income" ? "收入" : "支出", r.category, r.amount, r.platform || "", r.note || ""])];
     downloadCsv(`早餐記帳-篩選明細-${localDate}.csv`, rows);
   });
-  $("exportSummary").addEventListener("click", () => {
-    const income = records.filter(r => r.type === "income").reduce((s,r) => s + r.amount, 0);
-    const expense = records.filter(r => r.type === "expense").reduce((s,r) => s + r.amount, 0);
-    const totals = new Map();
-    records.forEach(r => {
-      const total = totals.get(r.category) || { income: 0, expense: 0 };
-      total[r.type] += r.amount;
-      totals.set(r.category, total);
+  /* ===== 完整備份（Excel：彙整／明細／設定 三個分頁）與匯入還原 ===== */
+  const TYPE_LABEL = { income: "收入", expense: "支出" };
+  const KIND_LABEL = { commission: "平台抽成", monthlyFee: "平台月費" };
+  const pad2 = n => String(n).padStart(2, "0");
+  const sumByType = list => list.reduce((t, r) => { t[r.type] += Number(r.amount) || 0; return t; }, { income: 0, expense: 0 });
+  function groupTotals(list, keyFn) {
+    const map = new Map();
+    list.forEach(r => { const k = keyFn(r), t = map.get(k) || { income: 0, expense: 0 }; t[r.type] += Number(r.amount) || 0; map.set(k, t); });
+    return map;
+  }
+  function buildWorkbook() {
+    const all = [...records].sort((a, b) => a.date.localeCompare(b.date) || (a.created || 0) - (b.created || 0));
+    const total = sumByType(all), now = new Date();
+    const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+    const months = [...groupTotals(all, r => r.date.slice(0, 7))].sort(([a], [b]) => a.localeCompare(b));
+    const cats = [...groupTotals(all, r => r.category)].sort(([a], [b]) => a.localeCompare(b, "zh-Hant"));
+    const summary = [
+      ["早餐店記帳本 完整備份"], ["備份時間", stamp], ["明細筆數", all.length], [],
+      ["項目", "收入總額", "支出總額", "結餘"], ["累積總結餘", total.income, total.expense, total.income - total.expense], [],
+      ["月份", "收入總額", "支出總額", "當月結餘"], ...months.map(([m, t]) => [m, t.income, t.expense, t.income - t.expense]), [],
+      ["分類", "收入總額", "支出總額", "分類結餘"], ...cats.map(([c, t]) => [c, t.income, t.expense, t.income - t.expense])
+    ];
+    const detail = [["日期", "類型", "分類", "金額", "平台", "費用種類", "備註", "編號", "來源編號", "分攤編號", "建立時間"],
+      ...all.map(r => [r.date, TYPE_LABEL[r.type], r.category, r.amount, r.platform || "", KIND_LABEL[r.expenseKind] || "", r.note || "", r.id, r.sourceId || "", r.allocationId || "", r.created || ""])];
+    const settingRows = [["設定項目", "數值"],
+      ...platforms.flatMap(p => [[`${p} 抽成率（%）`, Number(settings[p].rate) || 0], [`${p} 月費（元）`, Number(settings[p].monthly) || 0]]),
+      ["房租生效月份", settings.rentEffectiveMonth || ""], [],
+      ["房租排程生效月份", "每月房租（元）"], ...settings.rentSchedule.map(i => [i.month, Number(i.amount) || 0])];
+    const wb = XLSX.utils.book_new();
+    const add = (rows, name, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws["!cols"] = widths.map(wch => ({ wch })); XLSX.utils.book_append_sheet(wb, ws, name); };
+    add(summary, "彙整", [18, 14, 14, 14]);
+    add(detail, "明細", [12, 6, 12, 10, 11, 10, 40, 38, 38, 38, 15]);
+    add(settingRows, "設定", [20, 16]);
+    return wb;
+  }
+  $("exportBackup").addEventListener("click", async () => {
+    if (!window.XLSX) { alert("Excel 元件還在載入，請確認網路連線後再試一次。"); return; }
+    const name = `早餐記帳-完整備份-${localDate}.xlsx`;
+    const data = XLSX.write(buildWorkbook(), { bookType: "xlsx", type: "array" });
+    const blob = new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    // 手機、平板：開啟分享選單，可直接存到 Google 雲端硬碟或「檔案」
+    try {
+      const file = new File([blob], name, { type: blob.type });
+      if (matchMedia("(pointer: coarse)").matches && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: name });
+        return;
+      }
+    } catch (error) { if (error.name === "AbortError") return; }
+    const url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showToast("完整備份已下載");
+  });
+
+  const blankCell = v => v === undefined || v === null || String(v).trim() === "";
+  const toNumber = v => blankCell(v) ? NaN : Number(String(v).replace(/[$,，\s元]/g, ""));
+  function cellToDate(v, withDay = true) {
+    let y, m, d;
+    if (typeof v === "number") { const c = XLSX.SSF.parse_date_code(v); if (!c) return ""; y = c.y; m = c.m; d = c.d; }
+    else {
+      const match = String(v || "").trim().match(withDay ? /^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/ : /^(\d{4})\s*[-/.年]\s*(\d{1,2})/);
+      if (!match) return "";
+      [, y, m, d] = match.map(Number);
+    }
+    if (m < 1 || m > 12 || (withDay && (d < 1 || d > 31))) return "";
+    return withDay ? `${y}-${pad2(m)}-${pad2(d)}` : `${y}-${pad2(m)}`;
+  }
+  function parseBackup(wb) {
+    const sheetRows = name => XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
+    const headerIndex = (rows, must) => rows.findIndex(r => { const cells = r.map(c => String(c).trim()); return must.every(h => cells.includes(h)); });
+    let rows = null, h = -1;
+    for (const name of ["明細", ...wb.SheetNames]) {
+      if (!wb.Sheets[name]) continue;
+      const candidate = sheetRows(name), idx = headerIndex(candidate, ["日期", "類型", "分類", "金額"]);
+      if (idx >= 0) { rows = candidate; h = idx; break; }
+    }
+    if (!rows) throw new Error("找不到明細資料，表格需要有「日期、類型、分類、金額」欄位。");
+    const header = rows[h].map(c => String(c).trim());
+    const errors = [], list = [], ids = new Set(), base = Date.now();
+    rows.slice(h + 1).forEach((row, i) => {
+      if (row.every(blankCell)) return;
+      const get = name => { const c = header.indexOf(name); return c < 0 ? "" : row[c]; };
+      const text = name => String(get(name) ?? "").trim();
+      const date = cellToDate(get("日期"));
+      const type = ["收入", "income"].includes(text("類型")) ? "income" : ["支出", "expense"].includes(text("類型")) ? "expense" : "";
+      const category = text("分類"), amount = toNumber(get("金額"));
+      if (!date || !type || !category || !Number.isFinite(amount) || amount <= 0) { errors.push(h + i + 2); return; }
+      let id = text("編號");
+      if (!id || ids.has(id)) id = crypto.randomUUID();
+      ids.add(id);
+      const record = { id, date, type, category, amount, note: text("備註"), created: Number(get("建立時間")) || base + i };
+      const kind = ["平台抽成", "commission"].includes(text("費用種類")) ? "commission" : ["平台月費", "monthlyFee"].includes(text("費用種類")) ? "monthlyFee" : "";
+      if (text("平台")) record.platform = text("平台");
+      if (kind) record.expenseKind = kind;
+      if (text("來源編號")) record.sourceId = text("來源編號");
+      if (text("分攤編號")) record.allocationId = text("分攤編號");
+      list.push(record);
     });
-    const rows = [["項目","收入總額","支出總額","結餘"],["累積總結餘",income,expense,income-expense],["分類","收入總額","支出總額","分類結餘"]];
-    [...totals.entries()].sort(([a],[b]) => a.localeCompare(b, "zh-Hant")).forEach(([category,total]) => rows.push([category,total.income,total.expense,total.income-total.expense]));
-    downloadCsv(`早餐記帳-累積總結餘-${localDate}.csv`, rows);
+    let newSettings = null;
+    if (wb.Sheets["設定"]) {
+      const srows = sheetRows("設定"), map = new Map(srows.map(r => [String(r[0]).trim(), r[1]]));
+      const s = JSON.parse(JSON.stringify(settings));
+      let found = false;
+      platforms.forEach(p => {
+        const rate = toNumber(map.get(`${p} 抽成率（%）`)), monthly = toNumber(map.get(`${p} 月費（元）`));
+        if (Number.isFinite(rate) && rate >= 0 && rate <= 100) { s[p].rate = rate; found = true; }
+        if (Number.isFinite(monthly) && monthly >= 0) { s[p].monthly = monthly; found = true; }
+      });
+      const effective = cellToDate(map.get("房租生效月份"), false);
+      if (effective) s.rentEffectiveMonth = effective;
+      const scheduleAt = srows.findIndex(r => String(r[0]).trim() === "房租排程生效月份");
+      if (scheduleAt >= 0) {
+        s.rentSchedule = srows.slice(scheduleAt + 1)
+          .map(r => ({ month: cellToDate(r[0], false), amount: toNumber(r[1]) }))
+          .filter(x => x.month && Number.isFinite(x.amount) && x.amount >= 0)
+          .sort((a, b) => a.month.localeCompare(b.month));
+        s.rent = s.rentSchedule.length ? s.rentSchedule[s.rentSchedule.length - 1].amount : 0;
+        found = true;
+      }
+      if (found) newSettings = s;
+    }
+    return { list, errors, newSettings };
+  }
+  $("importBackup").addEventListener("click", () => $("importFile").click());
+  $("importFile").addEventListener("change", async e => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!window.XLSX) { alert("Excel 元件還在載入，請確認網路連線後再試一次。"); return; }
+    let parsed;
+    try { parsed = parseBackup(XLSX.read(await file.arrayBuffer(), { type: "array", codepage: 65001 })); }
+    catch (error) { alert("無法讀取這個檔案：" + error.message); return; }
+    const { list, errors, newSettings } = parsed;
+    if (!list.length) { alert("檔案裡沒有可以匯入的明細資料。"); return; }
+    let message = `備份檔共有 ${list.length} 筆明細${newSettings ? "，以及房租與平台設定" : ""}。\n\n按「確定」會用備份檔取代目前所有記帳資料（目前 ${records.length} 筆），並同步到所有裝置。`;
+    if (errors.length) message += `\n\n有 ${errors.length} 列格式不正確，將會略過（第 ${errors.slice(0, 5).join("、")}${errors.length > 5 ? "…" : ""} 列）。`;
+    if (records.length) message += "\n\n如果還沒備份目前的資料，請先按「取消」，再按「下載完整備份」。";
+    if (!confirm(message)) return;
+    records = list;
+    if (newSettings) settings = normalizeSettings(newSettings);
+    save(); syncSettings(); updatePreview(); render();
+    showToast(`已匯入 ${list.length} 筆明細`);
   });
   updateCategories(); syncSettings(); setMonthFilters($("month").value); render();
 })();
