@@ -165,7 +165,7 @@ window.Cloud = (() => {
   const readJSON = (k, f) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : f; } catch { return f; } };
   const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.error(e); } };
   const configured = !SUPABASE_URL.includes("YOUR-") && !SUPABASE_ANON_KEY.includes("YOUR-");
-  let client = null, user = null, listener = null, synced = {}, settingsSynced = null, chain = Promise.resolve(), timer = null;
+  let setupMissing = false, client = null, user = null, listener = null, synced = {}, settingsSynced = null, chain = Promise.resolve(), timer = null;
 
   function setStatus(text, state) { const el = $("syncStatus"); if (el) { el.textContent = text; el.dataset.state = state || ""; } }
 
@@ -250,12 +250,12 @@ window.Cloud = (() => {
   async function pull() {
     const rows = [];
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await client.from("ledger_records").select("id,data").order("id").range(from, from + 999);
+      const { data, error } = await client.from("shared_records").select("id,data").order("id").range(from, from + 999);
       if (error) throw error;
       rows.push(...data);
       if (data.length < 1000) break;
     }
-    const { data: s, error: se } = await client.from("ledger_settings").select("data").maybeSingle();
+    const { data: s, error: se } = await client.from("shared_settings").select("data").eq("id", "main").maybeSingle();
     if (se) throw se;
     const records = rows.map(r => r.data);
     synced = {}; records.forEach(r => synced[r.id] = canon(r));
@@ -275,20 +275,20 @@ window.Cloud = (() => {
       const now = new Date().toISOString();
       for (let i = 0; i < ups.length; i += 500) {
         const chunk = ups.slice(i, i + 500);
-        const { error } = await client.from("ledger_records").upsert(chunk.map(r => ({ user_id: user.id, id: r.id, data: r, updated_at: now })), { onConflict: "user_id,id" });
+        const { error } = await client.from("shared_records").upsert(chunk.map(r => ({ id: r.id, data: r, updated_by: user.id, updated_at: now })), { onConflict: "id" });
         if (error) throw error;
         chunk.forEach(r => synced[r.id] = current[r.id]); writeJSON(K.synced, synced);
       }
       for (let i = 0; i < dels.length; i += 200) {
         const chunk = dels.slice(i, i + 200);
-        const { error } = await client.from("ledger_records").delete().eq("user_id", user.id).in("id", chunk);
+        const { error } = await client.from("shared_records").delete().in("id", chunk);
         if (error) throw error;
         chunk.forEach(id => delete synced[id]); writeJSON(K.synced, synced);
       }
       if (settings) {
         const c = canon(settings);
         if (c !== settingsSynced) {
-          const { error } = await client.from("ledger_settings").upsert({ user_id: user.id, data: settings, updated_at: now });
+          const { error } = await client.from("shared_settings").upsert({ id: "main", data: settings, updated_by: user.id, updated_at: now });
           if (error) throw error;
           settingsSynced = c; localStorage.setItem(K.setSynced, c);
         }
@@ -319,15 +319,15 @@ window.Cloud = (() => {
       synced[r.id] = canon(r); writeJSON(K.synced, synced);
       listener && listener({ upsert: r });
     };
-    client.channel("ledger-" + user.id)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ledger_records", filter: `user_id=eq.${user.id}` }, onRow)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ledger_records", filter: `user_id=eq.${user.id}` }, onRow)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "ledger_records" }, p => {
-        const id = p.old && p.old.id; if (!id || (p.old.user_id && p.old.user_id !== user.id)) return;
+    client.channel("shared-ledger")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "shared_records" }, onRow)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "shared_records" }, onRow)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "shared_records" }, p => {
+        const id = p.old && p.old.id; if (!id) return;
         delete synced[id]; writeJSON(K.synced, synced);
         listener && listener({ deleteId: id });
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "ledger_settings", filter: `user_id=eq.${user.id}` }, p => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "shared_settings", filter: "id=eq.main" }, p => {
         if (!p.new || !p.new.data) return;
         settingsSynced = canon(p.new.data); localStorage.setItem(K.setSynced, settingsSynced);
         listener && listener({ settings: p.new.data });
@@ -347,7 +347,18 @@ window.Cloud = (() => {
       let { data: { session } } = await client.auth.getSession();
       if (hash) history.replaceState(null, "", location.pathname + location.search);
       if (session && recovery) session = await showAuth("reset");
-      if (!session) session = await showAuth("login", linkExpired ? "信中的連結已過期或已使用過，請重新申請。" : "", false);
+      let loginMsg = linkExpired ? "信中的連結已過期或已使用過，請重新申請。" : "";
+      // 確認這個帳號在共用帳本的成員名單內
+      while (true) {
+        if (!session) session = await showAuth("login", loginMsg);
+        const { data: isMember, error } = await client.rpc("is_ledger_member");
+        if (error) { console.error(error); if (error.code === "PGRST202") setupMissing = true; break; }
+        if (isMember) break;
+        const email = session.user.email;
+        await client.auth.signOut();
+        session = null;
+        loginMsg = `「${email}」還沒有加入共用帳本，請先在 Supabase 把這個帳號加入成員名單。`;
+      }
       user = session.user;
       $("logoutBtn").hidden = false;
       const owner = localStorage.getItem(K.owner);
@@ -356,13 +367,19 @@ window.Cloud = (() => {
       synced = readJSON(K.synced, {}); settingsSynced = localStorage.getItem(K.setSynced);
       setStatus("同步中…", "busy");
       try { await pushNow(); await pull(); setStatus("已同步", "ok"); }
-      catch (e) { console.error(e); setStatus("同步失敗，暫存本機", "error"); }
+      catch (e) { console.error(e); setStatus(setupMissing ? "尚未建立共用帳本（請執行 SQL）" : "同步失敗，暫存本機", "error"); }
       subscribe();
       window.addEventListener("online", refresh);
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
       $("logoutBtn").onclick = async () => {
         if (!confirm("確定要登出？雲端資料會保留，本機暫存會清除。")) return;
-        try { await pushNow(); } catch { if (!confirm("還有資料尚未同步到雲端，登出會遺失這些資料。仍要登出？")) return; }
+        setStatus("同步中…", "busy");
+        try { await pushNow(); setStatus("已同步", "ok"); }
+        catch (e) {
+          console.error(e); setStatus("同步失敗，暫存本機", "error");
+          alert("還有資料沒有同步到雲端，為了避免資料遺失，現在不能登出。\n\n請確認網路連線，等右上角顯示「已同步」後再登出。");
+          return;
+        }
         await client.auth.signOut();
         [K.rec, K.set, K.synced, K.setSynced, K.owner].forEach(k => localStorage.removeItem(k));
         location.reload();
