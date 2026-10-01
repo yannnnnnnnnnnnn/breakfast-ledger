@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>早餐店記帳本</title>
+  <style>
+    :root{--ink:#28332d;--muted:#778078;--green:#456b50;--cream:#f7f5ee;--line:#e5e7df;--white:#fff;--red:#b55345;--shadow:0 8px 26px #28332d0c}
+    *{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--ink);font:15px/1.55 "Segoe UI","Microsoft JhengHei",sans-serif}
+    header{background:var(--green);color:white;padding:25px max(22px,calc((100% - 1120px)/2)) 23px}
+    header h1{margin:0;font-size:25px;letter-spacing:.04em}header p{margin:4px 0 0;color:#e3eade;font-size:13px}
+    main{max-width:1120px;margin:24px auto;padding:0 20px 50px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+    .month{border:1px solid var(--line);background:white;border-radius:9px;padding:9px 12px;font:inherit;color:var(--ink)}
+    button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:10px 14px;background:var(--green);color:#fff;font-weight:600}
+    button.secondary{background:#edf1e9;color:var(--green)}button.danger{background:#fff0ed;color:var(--red);padding:6px 9px}
+    .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}.card,.panel{background:var(--white);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+    .card{padding:16px 18px}.card span{display:block;color:var(--muted);font-size:13px}.card strong{font-size:22px;display:block;margin-top:4px}.card small{color:var(--muted)}
+    .panel{padding:18px;margin-bottom:16px}.panel h2{font-size:17px;margin:0 0 14px}.forms{display:grid;grid-template-columns:1.2fr 1fr 1.25fr 1fr 1.5fr auto;gap:10px;align-items:end}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px}input,select{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fff;font:inherit;color:var(--ink)}
+    .settings{display:grid;grid-template-columns:1fr 1fr;gap:12px}.platform{border:1px solid var(--line);border-radius:9px;padding:12px}.platform h3{margin:0 0 10px;font-size:15px}.platform .fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .platform-preview{display:none;grid-column:1/-1;background:#f3f6f0;border:1px solid #e3eade;border-radius:8px;padding:10px 12px;color:var(--green);font-size:13px}.platform-preview strong{margin-left:4px;font-size:15px}.platform-preview span{margin-right:16px}
+    .panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.panel-head h2{margin:0}
+    .filters{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 16px}.tabs{display:flex;gap:8px;margin:0 0 12px}.tabs button.active{background:var(--green);color:white}.tabs button:not(.active){background:#edf1e9;color:var(--green)}.hidden{display:none}
+    .table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;border-bottom:1px solid var(--line);padding:10px 8px}th{font-size:12px;color:var(--muted);font-weight:600}td.amount{text-align:right;font-variant-numeric:tabular-nums}.income{color:var(--green)}.expense{color:var(--red)}.empty{text-align:center;color:var(--muted);padding:25px}
+    .hint{font-size:12px;color:var(--muted);margin:12px 0 0}.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#28332d;color:white;padding:10px 16px;border-radius:8px;display:none;box-shadow:var(--shadow)}
+    @media(max-width:800px){.cards{grid-template-columns:repeat(2,1fr)}.forms{grid-template-columns:repeat(2,1fr)}.settings{grid-template-columns:1fr}.filters{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:480px){main{padding:0 12px 35px}.cards{gap:8px}.card{padding:12px}.card strong{font-size:18px}.panel{padding:13px}.forms{grid-template-columns:1fr 1fr}.forms button{grid-column:span 2}}
+    /* ===== 行動裝置防跑版修正 ===== */
+    html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    body{overflow-x:hidden;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+    .forms>*,.filters>*,.fields>*,.settings>*,.toolbar>*,.cards>*{min-width:0}
+    input,select{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;height:42px;margin:0;font-size:16px;line-height:1.3}
+    input[type=date],input[type=month]{display:flex;align-items:center;justify-content:center;text-align:center;padding:0 10px;line-height:40px}
+    input[type=date]::-webkit-date-and-time-value,input[type=month]::-webkit-date-and-time-value{text-align:center;margin:0 auto;width:100%;line-height:40px}
+    input[type=date]::-webkit-datetime-edit,input[type=month]::-webkit-datetime-edit{padding:0;text-align:center;line-height:40px}
+    select{padding-right:32px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23778078' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+    .month{width:auto;min-width:160px}
+    .forms label,.filters label,.fields label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .forms button{height:42px}
+    .tabs{flex-wrap:wrap}
+    .platform .fields[style]{max-width:none!important}
+    @media(max-width:480px){
+      header{padding:20px 14px 18px}header h1{font-size:22px}
+      .toolbar>div{flex:1 1 100%}.month{width:100%}.toolbar button{width:100%}
+      .tabs button{flex:1 1 auto}.tabs #exportFiltered{flex-basis:100%}
+      th,td{padding:9px 6px;font-size:14px}
+    }
+    @media(max-width:360px){
+      .forms,.filters,.platform .fields{grid-template-columns:1fr}
+      .forms button{grid-column:auto}
+    }
+    /* ===== 雲端同步 / 登入 ===== */
+    [hidden]{display:none!important}
+    header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+    .sync{display:flex;align-items:center;gap:8px;font-size:13px}
+    .sync-status{background:#ffffff1f;border-radius:999px;padding:5px 11px;color:#e3eade;white-space:nowrap}
+    .sync-status::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#cfd8cb;margin-right:6px;vertical-align:1px}
+    .sync-status[data-state=ok]::before{background:#9fe0a8}.sync-status[data-state=busy]::before{background:#f2d47c}.sync-status[data-state=error]::before{background:#ff9d8f}
+    .sync button{background:#ffffff26;color:#fff;padding:6px 11px;font-size:13px}
+    .auth{position:fixed;inset:0;z-index:100;background:var(--cream);display:flex;align-items:center;justify-content:center;padding:max(20px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom));overflow:auto}
+    .auth-card{width:100%;max-width:380px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:22px;display:grid;gap:6px}
+    .auth-card h2{margin:0;font-size:19px}.auth-card p{margin:0 0 8px;color:var(--muted);font-size:13px}
+    .auth-card label{margin:6px 0 0}.auth-card button{height:44px;margin-top:6px}
+    .auth-card .auth-msg{min-height:1.4em;margin:4px 0 0;color:var(--red)}
+    .loading{position:fixed;inset:0;z-index:90;background:var(--cream);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+  </style>
+</head>
+<body>
+<header><div><h1>早餐店記帳本</h1><p>每日收支・平台抽成・月費，一目了然</p></div>
+  <div class="sync"><span class="sync-status" id="syncStatus" data-state="busy">連線中…</span><button type="button" id="logoutBtn" hidden>登出</button></div></header>
+<div class="loading" id="loadingScreen">資料載入中…</div>
+<div class="auth" id="authOverlay" hidden>
+  <form class="auth-card" id="authForm">
+    <h2>登入早餐店記帳本</h2>
+    <p>登入後，資料會在手機、平板、電腦之間自動同步。</p>
+    <label for="authEmail">電子郵件</label><input id="authEmail" type="email" autocomplete="email" required>
+    <label for="authPassword">密碼（至少 6 碼）</label><input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
+    <button type="submit">登入</button>
+    <button type="button" class="secondary" id="signupBtn">建立新帳號</button>
+    <p class="auth-msg" id="authMsg" role="alert"></p>
+  </form>
+</div>
+<main>
+  <div class="toolbar"><div><label for="month">月報月份</label><input class="month" id="month" type="month"></div><div><button class="secondary" id="exportSummary">匯出累積總結餘</button></div></div>
+  <section class="cards">
+    <div class="card"><span>收入總額</span><strong id="incomeTotal">$0</strong></div>
+    <div class="card"><span>支出總額（含平台抽成）</span><strong id="expenseTotal">$0</strong></div>
+    <div class="card"><span>本月結餘</span><strong id="balance">$0</strong></div>
+    <div class="card"><span>平台抽成＋月費</span><strong id="platformCost">$0</strong><small id="platformBreakdown"></small></div>
+    <div class="card"><span>累積總結餘</span><strong id="allTimeBalance">$0</strong><small>全部已記帳收入－支出</small></div>
+  </section>
+  <section class="panel">
+    <h2>新增收支</h2>
+    <form class="forms" id="entryForm">
+      <div><label for="date">日期</label><input id="date" type="date" required></div>
+      <div><label for="type">類型</label><select id="type"><option value="income">收入</option><option value="expense">支出</option></select></div>
+      <div><label for="category">分類</label><select id="category"></select></div>
+      <div><label for="amount">金額（元）</label><input id="amount" type="number" min="0.01" step="0.01" required placeholder="0"></div>
+      <div><label id="noteLabel" for="note">備註</label><input id="note" maxlength="100" placeholder="選填"></div>
+      <button type="submit">新增</button>
+      <div class="platform-preview" id="platformPreview" aria-live="polite"><span>預估抽成<strong id="previewCommission">$0</strong></span><span>扣抽成後淨額<strong id="previewNet">$0</strong></span></div>
+    </form>
+    <p class="hint">輸入 UBER／FOODPANDA 原始營業額時，會依設定自動新增一筆平台抽成支出。抽成率以新增當下的設定計算並保留。</p>
+  </section>
+  <section class="panel">
+    <h2>固定支出設定</h2>
+    <div class="platform" style="margin-bottom:12px"><h3>每月房租</h3><div class="fields" style="max-width:540px"><div><label for="monthlyRent">每月金額（元）</label><input id="monthlyRent" type="number" min="0" step="0.01"></div><div><label for="rentEffectiveMonth">生效月份</label><input id="rentEffectiveMonth" type="month"></div></div></div>
+    <div class="settings">
+      <div class="platform"><h3>UBER</h3><div class="fields"><div><label for="uberRate">抽成率（%）</label><input id="uberRate" type="number" min="0" max="100" step="0.01"></div><div><label for="uberMonthly">月費（元）</label><input id="uberMonthly" type="number" min="0" step="0.01"></div></div></div>
+      <div class="platform"><h3>FOODPANDA</h3><div class="fields"><div><label for="foodpandaRate">抽成率（%）</label><input id="foodpandaRate" type="number" min="0" max="100" step="0.01"></div><div><label for="foodpandaMonthly">月費（元）</label><input id="foodpandaMonthly" type="number" min="0" step="0.01"></div></div></div>
+    </div>
+    <p class="hint">設定房租金額與生效月份後，該月份起會自動在明細新增房租支出；不同月份依各自生效的設定計算，已登記的歷史明細不會因調整而改變。</p>
+  </section>
+  <section class="panel">
+    <h2>水電帳單分攤</h2>
+    <form class="forms" id="utilityForm">
+      <div><label for="utilityStartMonth">分攤起始月份</label><input id="utilityStartMonth" type="month" required></div>
+      <div><label for="waterBill">水費帳單總額（元）</label><input id="waterBill" type="number" min="0" step="0.01" value="0" required></div>
+      <div><label for="electricityBill">電費帳單總額（元）</label><input id="electricityBill" type="number" min="0" step="0.01" value="0" required></div>
+      <div><label for="utilityNote">備註</label><input id="utilityNote" maxlength="100" placeholder="選填"></div>
+      <button type="submit">分攤到連續兩個月</button>
+    </form>
+    <p class="hint">輸入兩個月帳單總額與分攤起始月份，系統會將各筆帳單平均分成兩份，列入起始月份及下一月份的支出明細；每筆帳單會保留來源識別，避免重複分攤。</p>
+  </section>
+  <section class="panel">
+    <h2>記帳資料與分類統計</h2>
+    <div class="filters">
+      <div><label for="filterFrom">開始日期</label><input id="filterFrom" type="date"></div>
+      <div><label for="filterTo">結束日期</label><input id="filterTo" type="date"></div>
+      <div><label for="filterType">收支類型</label><select id="filterType"><option value="">全部</option><option value="income">收入</option><option value="expense">支出</option></select></div>
+      <div><label for="filterCategory">分類</label><select id="filterCategory"><option value="">全部分類</option></select></div>
+    </div>
+    <div class="tabs"><button type="button" class="active" data-tab="detailTab">收支明細</button><button type="button" data-tab="statsTab">分類統計</button><button type="button" class="secondary" id="exportFiltered">匯出篩選結果 CSV</button></div>
+    <div id="detailTab"><div class="panel-head"><h2>收支明細</h2></div>
+      <div class="table-wrap"><table><thead><tr><th>日期</th><th>類型</th><th>分類</th><th>備註</th><th style="text-align:right">金額</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+    </div>
+    <div id="statsTab" class="hidden"><div class="panel-head"><h2>各分類收入／支出統計</h2></div>
+      <div class="table-wrap"><table><thead><tr><th>分類</th><th style="text-align:right">收入總額</th><th style="text-align:right">支出總額</th><th style="text-align:right">分類結餘</th></tr></thead><tbody id="statsRows"></tbody></table></div>
+    </div>
+  </section>
+</main><div class="toast" id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ===== Supabase 設定：請換成你自己專案的值（Project Settings → API） ===== */
+const SUPABASE_URL = "https://gvivuprejqjqwthfphoq.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2aXZ1cHJlanFqcXd0aGZwaG9xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5NDMwMjcsImV4cCI6MjEwNTUxOTAyN30.ihLGrs8n9M3LJKSOTldPWv2lKMHzZ031fGvWMubyn-o";
+
+/* ===== 雲端同步模組 ===== */
+window.Cloud = (() => {
+  const K = { rec: "breakfast-ledger-records", set: "breakfast-ledger-settings", synced: "breakfast-ledger-synced", setSynced: "breakfast-ledger-settings-synced", owner: "breakfast-ledger-owner" };
+  const $ = id => document.getElementById(id);
+  const canon = v => Array.isArray(v) ? "[" + v.map(canon).join(",") + "]"
+    : v && typeof v === "object" ? "{" + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}"
+    : JSON.stringify(v);
+  const readJSON = (k, f) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : f; } catch { return f; } };
+  const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.error(e); } };
+  const configured = !SUPABASE_URL.includes("YOUR-") && !SUPABASE_ANON_KEY.includes("YOUR-");
+  let client = null, user = null, listener = null, synced = {}, settingsSynced = null, chain = Promise.resolve(), timer = null;
+
+  function setStatus(text, state) { const el = $("syncStatus"); if (el) { el.textContent = text; el.dataset.state = state || ""; } }
+
+  function showLogin() {
+    return new Promise(resolve => {
+      $("loadingScreen").hidden = true;
+      $("authOverlay").hidden = false;
+      const msg = t => $("authMsg").textContent = t;
+      const creds = () => ({ email: $("authEmail").value.trim(), password: $("authPassword").value });
+      const done = session => { $("authOverlay").hidden = true; $("loadingScreen").hidden = false; resolve(session); };
+      $("authForm").onsubmit = async e => {
+        e.preventDefault(); msg("登入中…");
+        const { data, error } = await client.auth.signInWithPassword(creds());
+        if (error) return msg(/invalid login/i.test(error.message) ? "電子郵件或密碼錯誤" : /not confirmed/i.test(error.message) ? "請先到信箱點擊驗證連結" : "登入失敗：" + error.message);
+        done(data.session);
+      };
+      $("signupBtn").onclick = async () => {
+        if (!$("authForm").reportValidity()) return;
+        msg("建立帳號中…");
+        const { data, error } = await client.auth.signUp({ ...creds(), options: { emailRedirectTo: location.origin + location.pathname } });
+        if (error) return msg("建立失敗：" + error.message);
+        if (data.session) done(data.session); else msg("已寄出驗證信，請到信箱點連結後回來登入。");
+      };
+    });
+  }
+
+  async function pull() {
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await client.from("ledger_records").select("id,data").order("id").range(from, from + 999);
+      if (error) throw error;
+      rows.push(...data);
+      if (data.length < 1000) break;
+    }
+    const { data: s, error: se } = await client.from("ledger_settings").select("data").maybeSingle();
+    if (se) throw se;
+    const records = rows.map(r => r.data);
+    synced = {}; records.forEach(r => synced[r.id] = canon(r));
+    writeJSON(K.synced, synced); writeJSON(K.rec, records);
+    if (s && s.data) { writeJSON(K.set, s.data); settingsSynced = canon(s.data); localStorage.setItem(K.setSynced, settingsSynced); }
+    return { records, settings: s ? s.data : null };
+  }
+
+  // 只上傳有變動的資料（新增／修改），並刪除雲端上已在本機刪除的資料
+  function pushNow() {
+    chain = chain.catch(() => {}).then(async () => {
+      if (!client || !user) return;
+      const records = readJSON(K.rec, []), settings = readJSON(K.set, null);
+      const current = {}; records.forEach(r => current[r.id] = canon(r));
+      const ups = records.filter(r => synced[r.id] !== current[r.id]);
+      const dels = Object.keys(synced).filter(id => !(id in current));
+      const now = new Date().toISOString();
+      for (let i = 0; i < ups.length; i += 500) {
+        const chunk = ups.slice(i, i + 500);
+        const { error } = await client.from("ledger_records").upsert(chunk.map(r => ({ user_id: user.id, id: r.id, data: r, updated_at: now })), { onConflict: "user_id,id" });
+        if (error) throw error;
+        chunk.forEach(r => synced[r.id] = current[r.id]); writeJSON(K.synced, synced);
+      }
+      for (let i = 0; i < dels.length; i += 200) {
+        const chunk = dels.slice(i, i + 200);
+        const { error } = await client.from("ledger_records").delete().eq("user_id", user.id).in("id", chunk);
+        if (error) throw error;
+        chunk.forEach(id => delete synced[id]); writeJSON(K.synced, synced);
+      }
+      if (settings) {
+        const c = canon(settings);
+        if (c !== settingsSynced) {
+          const { error } = await client.from("ledger_settings").upsert({ user_id: user.id, data: settings, updated_at: now });
+          if (error) throw error;
+          settingsSynced = c; localStorage.setItem(K.setSynced, c);
+        }
+      }
+    });
+    return chain;
+  }
+
+  function schedule() {
+    if (!client || !user) return;
+    clearTimeout(timer);
+    setStatus("同步中…", "busy");
+    timer = setTimeout(async () => {
+      try { await pushNow(); setStatus("已同步", "ok"); }
+      catch (e) { console.error(e); setStatus(navigator.onLine ? "同步失敗，稍後重試" : "離線中，連線後同步", "error"); }
+    }, 400);
+  }
+
+  async function refresh() {
+    if (!client || !user) return;
+    try { await pushNow(); const d = await pull(); listener && listener({ full: d }); setStatus("已同步", "ok"); }
+    catch (e) { console.error(e); setStatus(navigator.onLine ? "同步失敗，稍後重試" : "離線中，連線後同步", "error"); }
+  }
+
+  function subscribe() {
+    const onRow = p => {
+      const r = p.new && p.new.data; if (!r) return;
+      synced[r.id] = canon(r); writeJSON(K.synced, synced);
+      listener && listener({ upsert: r });
+    };
+    client.channel("ledger-" + user.id)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ledger_records", filter: `user_id=eq.${user.id}` }, onRow)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ledger_records", filter: `user_id=eq.${user.id}` }, onRow)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "ledger_records" }, p => {
+        const id = p.old && p.old.id; if (!id || (p.old.user_id && p.old.user_id !== user.id)) return;
+        delete synced[id]; writeJSON(K.synced, synced);
+        listener && listener({ deleteId: id });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "ledger_settings", filter: `user_id=eq.${user.id}` }, p => {
+        if (!p.new || !p.new.data) return;
+        settingsSynced = canon(p.new.data); localStorage.setItem(K.setSynced, settingsSynced);
+        listener && listener({ settings: p.new.data });
+      })
+      .subscribe();
+  }
+
+  async function ready() {
+    try {
+      if (!configured) { setStatus("僅存本機（尚未設定 Supabase）", ""); return; }
+      if (!window.supabase) { setStatus("無法連線同步服務，暫存本機", "error"); return; }
+      client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      let { data: { session } } = await client.auth.getSession();
+      if (!session) session = await showLogin();
+      user = session.user;
+      $("logoutBtn").hidden = false;
+      const owner = localStorage.getItem(K.owner);
+      if (owner && owner !== user.id) [K.rec, K.set, K.synced, K.setSynced].forEach(k => localStorage.removeItem(k));
+      localStorage.setItem(K.owner, user.id);
+      synced = readJSON(K.synced, {}); settingsSynced = localStorage.getItem(K.setSynced);
+      setStatus("同步中…", "busy");
+      try { await pushNow(); await pull(); setStatus("已同步", "ok"); }
+      catch (e) { console.error(e); setStatus("同步失敗，暫存本機", "error"); }
+      subscribe();
+      window.addEventListener("online", refresh);
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+      $("logoutBtn").onclick = async () => {
+        if (!confirm("確定要登出？雲端資料會保留，本機暫存會清除。")) return;
+        try { await pushNow(); } catch { if (!confirm("還有資料尚未同步到雲端，登出會遺失這些資料。仍要登出？")) return; }
+        await client.auth.signOut();
+        [K.rec, K.set, K.synced, K.setSynced, K.owner].forEach(k => localStorage.removeItem(k));
+        location.reload();
+      };
+    } catch (e) {
+      console.error(e); setStatus("同步服務錯誤，暫存本機", "error");
+    } finally {
+      $("loadingScreen").hidden = true;
+    }
+  }
+
+  return { ready, push: schedule, onChange: fn => listener = fn };
+})();
+</script>
+<script>
+(async () => {
+  const incomeCategories = ["營業額", "UBER", "FOODPANDA", "廢油回收"];
+  const expenseCategories = ["宜富冷凍", "地球商行", "瑞廣商行", "聯線麵包", "豆老爺", "福郁批發", "勝興批發", "開元食品", "薪資", "其他", "緯利餐具", "UBER", "FOODPANDA", "房租", "水費", "電費"];
+  const platforms = ["UBER", "FOODPANDA"];
+  const $ = id => document.getElementById(id);
+  const today = new Date();
+  const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $("date").value = localDate;
+  $("month").value = localDate.slice(0, 7);
+  await Cloud.ready();
+  const load = (key, fallback) => {
+    try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; }
+    catch (error) { console.error("讀取記帳資料失敗", error); return fallback; }
+  };
+  let records = load("breakfast-ledger-records", []);
+  let migratedRecords = false;
+  records.forEach(record => {
+    if (record.type !== "expense" || !["平台抽成", "平台月費"].includes(record.category)) return;
+    const legacyCategory = record.category;
+    const platform = platforms.includes(record.platform) ? record.platform : (record.note.startsWith("UBER") ? "UBER" : record.note.startsWith("FOODPANDA") ? "FOODPANDA" : "");
+    if (!platform) return;
+    record.category = platform;
+    record.expenseKind = legacyCategory === "平台月費" ? "monthlyFee" : "commission";
+    record.note = record.expenseKind === "monthlyFee"
+      ? `平台月費｜${record.note}`
+      : `平台抽成｜${record.note}`;
+    migratedRecords = true;
+  });
+  const normalizeSettings = s => {
+    s = s && typeof s === "object" ? s : {};
+    platforms.forEach(p => { s[p] = s[p] || { rate: 0, monthly: 0 }; });
+    if (!Array.isArray(s.rentSchedule)) {
+      s.rentSchedule = Number(s.rent) > 0 ? [{ month: localDate.slice(0, 7), amount: Number(s.rent) }] : [];
+    }
+    s.rent = Number(s.rent) || 0;
+    s.rentEffectiveMonth = s.rentEffectiveMonth || localDate.slice(0, 7);
+    return s;
+  };
+  let settings = normalizeSettings(load("breakfast-ledger-settings", null));
+  const save = () => {
+    try {
+      localStorage.setItem("breakfast-ledger-records", JSON.stringify(records));
+      localStorage.setItem("breakfast-ledger-settings", JSON.stringify(settings));
+    } catch (error) { alert("儲存失敗，請確認瀏覽器儲存空間是否足夠。"); throw error; }
+    Cloud.push();
+  };
+  // 其他裝置的變更即時同步進來
+  Cloud.onChange(change => {
+    if (change.full) { records = change.full.records; if (change.full.settings) settings = normalizeSettings(change.full.settings); syncSettings(); }
+    if (change.upsert) { const i = records.findIndex(r => r.id === change.upsert.id); if (i >= 0) records[i] = change.upsert; else records.push(change.upsert); }
+    if (change.deleteId) records = records.filter(r => r.id !== change.deleteId);
+    if (change.settings) { settings = normalizeSettings(change.settings); syncSettings(); updatePreview(); }
+    try {
+      localStorage.setItem("breakfast-ledger-records", JSON.stringify(records));
+      localStorage.setItem("breakfast-ledger-settings", JSON.stringify(settings));
+    } catch (error) { console.error(error); }
+    render();
+  });
+  if (migratedRecords) save();
+  const money = n => "$" + Number(n).toLocaleString("zh-TW", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  function updateCategories() {
+    const categories = $("type").value === "income" ? incomeCategories : expenseCategories;
+    $("category").innerHTML = categories.map(c => `<option>${c}</option>`).join("");
+    updateNoteRequirement();
+    updatePreview();
+  }
+  function updateNoteRequirement() {
+    const required = $("type").value === "expense" && $("category").value === "其他";
+    $("note").required = required;
+    $("note").placeholder = required ? "請填寫其他支出內容" : "選填";
+    $("noteLabel").textContent = required ? "備註（必填）" : "備註";
+  }
+  function updatePreview() {
+    const platform = $("category").value;
+    const visible = $("type").value === "income" && platforms.includes(platform);
+    $("platformPreview").style.display = visible ? "block" : "none";
+    if (!visible) return;
+    const gross = Number($("amount").value) || 0;
+    const commission = Math.round(gross * Number(settings[platform].rate)) / 100;
+    $("previewCommission").textContent = money(commission);
+    $("previewNet").textContent = money(gross - commission);
+  }
+  function syncSettings() {
+    $("monthlyRent").value = settings.rent;
+    $("rentEffectiveMonth").value = settings.rentEffectiveMonth;
+    platforms.forEach(p => {
+      $(p.toLowerCase() + "Rate").value = settings[p].rate;
+      $(p.toLowerCase() + "Monthly").value = settings[p].monthly;
+    });
+  }
+  function setMonthFilters(month) {
+    if (!month) return;
+    const [year, monthNumber] = month.split("-").map(Number);
+    const lastDay = new Date(year, monthNumber, 0).getDate();
+    $("filterFrom").value = `${month}-01`;
+    $("filterTo").value = `${month}-${String(lastDay).padStart(2, "0")}`;
+  }
+  function filteredRecords() {
+    const from = $("filterFrom").value, to = $("filterTo").value;
+    return records.filter(r =>
+      (!from || r.date >= from) && (!to || r.date <= to) &&
+      (!$("filterType").value || r.type === $("filterType").value) &&
+      (!$("filterCategory").value || r.category === $("filterCategory").value)
+    ).sort((a,b) => b.date.localeCompare(a.date) || b.created - a.created);
+  }
+  function updateFilterCategories() {
+    const selected = $("filterCategory").value;
+    const categories = [...new Set([...incomeCategories, ...expenseCategories, ...records.map(r => r.category)])];
+    $("filterCategory").innerHTML = '<option value="">全部分類</option>' + categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+    $("filterCategory").value = categories.includes(selected) ? selected : "";
+  }
+  function render() {
+    const month = $("month").value;
+    let addedMonthlyFees = false;
+    const rentSetting = settings.rentSchedule.filter(item => item.month <= month).sort((a,b) => a.month.localeCompare(b.month)).pop();
+    if (rentSetting && Number(rentSetting.amount) > 0 && !records.some(r => r.type === "expense" && r.category === "房租" && r.date.startsWith(month))) {
+      records.push({ id: `rent-${month}`, date: `${month}-01`, type: "expense", category: "房租", amount: Number(rentSetting.amount), note: `${month} 房租`, created: Date.now() });
+      addedMonthlyFees = true;
+    }
+    platforms.forEach((p, i) => {
+      if (Number(settings[p].monthly) <= 0 || records.some(r => r.type === "expense" && (r.expenseKind === "monthlyFee" || r.category === "平台月費") && r.platform === p && r.date.startsWith(month))) return;
+      records.push({ id: `fee-${p}-${month}`, date: `${month}-01`, type: "expense", category: p, expenseKind: "monthlyFee", amount: Number(settings[p].monthly), note: `平台月費｜${p} ${month} 月費`, platform: p, created: Date.now() + i });
+      addedMonthlyFees = true;
+    });
+    if (addedMonthlyFees) save();
+    const list = records.filter(r => r.date.startsWith(month)).sort((a,b) => b.date.localeCompare(a.date) || b.created - a.created);
+    const income = list.filter(r => r.type === "income").reduce((s,r) => s + r.amount, 0);
+    const expense = list.filter(r => r.type === "expense").reduce((s,r) => s + r.amount, 0);
+    const fee = list.filter(r => r.type === "expense" && (r.expenseKind === "commission" || r.expenseKind === "monthlyFee" || r.category === "平台抽成" || r.category === "平台月費")).reduce((s,r) => s + r.amount, 0);
+    const allIncome = records.filter(r => r.type === "income").reduce((s,r) => s + r.amount, 0);
+    const allExpense = records.filter(r => r.type === "expense").reduce((s,r) => s + r.amount, 0);
+    $("incomeTotal").textContent = money(income);
+    $("expenseTotal").textContent = money(expense);
+    $("balance").textContent = money(income - expense);
+    $("platformCost").textContent = money(fee);
+    const breakdown = platforms.map(p => `${p} ${money(list.filter(r => (r.platform === p || r.category === p) && r.type === "expense").reduce((s,r) => s + r.amount, 0))}`).join(" ・ ");
+    $("platformBreakdown").textContent = breakdown;
+    $("allTimeBalance").textContent = money(allIncome - allExpense);
+    updateFilterCategories();
+    const visibleRecords = filteredRecords();
+    $("rows").innerHTML = visibleRecords.length ? visibleRecords.map(r => `<tr><td>${r.date}</td><td class="${r.type}">${r.type === "income" ? "收入" : "支出"}</td><td>${r.category}</td><td>${escapeHtml(r.note || "")}</td><td class="amount ${r.type}">${r.type === "income" ? "+" : "−"}${money(r.amount)}</td><td><button class="danger" data-delete="${r.id}" aria-label="刪除">刪除</button></td></tr>`).join("") : '<tr><td class="empty" colspan="6">沒有符合篩選條件的記帳資料</td></tr>';
+    const totals = new Map();
+    visibleRecords.forEach(r => {
+      const total = totals.get(r.category) || { income: 0, expense: 0 };
+      total[r.type] += r.amount;
+      totals.set(r.category, total);
+    });
+    const categories = [...new Set([...incomeCategories, ...expenseCategories, ...totals.keys()])];
+    $("statsRows").innerHTML = categories.map(category => {
+      const total = totals.get(category) || { income: 0, expense: 0 };
+      return `<tr><td>${escapeHtml(category)}</td><td class="amount income">${money(total.income)}</td><td class="amount expense">${money(total.expense)}</td><td class="amount">${money(total.income-total.expense)}</td></tr>`;
+    }).join("");
+  }
+  function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
+  function showToast(text) { const el = $("toast"); el.textContent = text; el.style.display = "block"; setTimeout(() => el.style.display = "none", 2600); }
+  $("type").addEventListener("change", updateCategories);
+  $("month").addEventListener("change", () => { setMonthFilters($("month").value); render(); });
+  $("monthlyRent").addEventListener("change", e => {
+    const value = Number(e.target.value);
+    if (!Number.isFinite(value) || value < 0) { alert("房租金額不可小於 0。"); syncSettings(); return; }
+    settings.rent = value;
+    settings.rentEffectiveMonth = $("rentEffectiveMonth").value || localDate.slice(0, 7);
+    const effectiveMonth = settings.rentEffectiveMonth;
+    settings.rentSchedule = settings.rentSchedule.filter(item => item.month !== effectiveMonth);
+    settings.rentSchedule.push({ month: effectiveMonth, amount: value });
+    settings.rentSchedule.sort((a,b) => a.month.localeCompare(b.month));
+    save(); render(); showToast("房租設定已儲存");
+  });
+  $("rentEffectiveMonth").addEventListener("change", () => {
+    settings.rentEffectiveMonth = $("rentEffectiveMonth").value || localDate.slice(0, 7);
+    save();
+  });
+  $("utilityStartMonth").value = $("month").value;
+  $("utilityForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const startMonth = $("utilityStartMonth").value;
+    const water = Number($("waterBill").value), electricity = Number($("electricityBill").value);
+    if (!startMonth || !Number.isFinite(water) || water < 0 || !Number.isFinite(electricity) || electricity < 0 || (water === 0 && electricity === 0)) {
+      alert("請選擇分攤月份，並輸入至少一項大於 0 的水費或電費帳單金額。");
+      return;
+    }
+    const [year, month] = startMonth.split("-").map(Number);
+    const nextDate = new Date(year, month, 1);
+    const nextMonth = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`;
+    const billId = crypto.randomUUID(), created = Date.now(), note = $("utilityNote").value.trim();
+    const allocations = [];
+    [["水費", water], ["電費", electricity]].forEach(([category, total]) => {
+      if (total <= 0) return;
+      const half = Math.round(Number(total) * 50) / 100;
+      const description = note ? `${note}；帳單總額 ${money(Number(total))}` : `帳單總額 ${money(Number(total))}`;
+      allocations.push(
+        { id: crypto.randomUUID(), allocationId: billId, date: `${startMonth}-01`, type: "expense", category, amount: half, note: `${startMonth} 分攤（1/2）；${description}`, created },
+        { id: crypto.randomUUID(), allocationId: billId, date: `${nextMonth}-01`, type: "expense", category, amount: Number(total) - half, note: `${nextMonth} 分攤（2/2）；${description}`, created: created + 1 }
+      );
+    });
+    records.push(...allocations);
+    save();
+    $("month").value = startMonth;
+    setMonthFilters(startMonth);
+    $("utilityForm").reset();
+    $("utilityStartMonth").value = startMonth;
+    $("waterBill").value = "0";
+    $("electricityBill").value = "0";
+    render();
+    showToast(`水電帳單已分攤至 ${startMonth} 和 ${nextMonth}`);
+  });
+  ["filterFrom", "filterTo", "filterType", "filterCategory"].forEach(id => $(id).addEventListener("change", render));
+  document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-tab]").forEach(tab => tab.classList.toggle("active", tab === button));
+    $("detailTab").classList.toggle("hidden", button.dataset.tab !== "detailTab");
+    $("statsTab").classList.toggle("hidden", button.dataset.tab !== "statsTab");
+  }));
+  platforms.forEach(p => ["Rate", "Monthly"].forEach(suffix => {
+    $(p.toLowerCase() + suffix).addEventListener("change", e => {
+      const value = Number(e.target.value);
+      if (!Number.isFinite(value) || value < 0 || (suffix === "Rate" && value > 100)) { alert(suffix === "Rate" ? "抽成率請輸入 0 至 100。" : "月費不可小於 0。"); syncSettings(); return; }
+      settings[p][suffix === "Rate" ? "rate" : "monthly"] = value;
+      save(); updatePreview(); render(); showToast("平台設定已儲存");
+    });
+  }));
+  $("category").addEventListener("change", () => { updateNoteRequirement(); updatePreview(); });
+  $("amount").addEventListener("input", updatePreview);
+  $("entryForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const type = $("type").value, category = $("category").value, amount = Number($("amount").value);
+    if (!Number.isFinite(amount) || amount <= 0) { alert("請輸入大於 0 的金額。"); return; }
+    const created = Date.now(), note = $("note").value.trim();
+    const row = { id: crypto.randomUUID(), date: $("date").value, type, category, amount, note, created };
+    records.push(row);
+    if (type === "income" && platforms.includes(category)) {
+      const rate = Number(settings[category].rate), commission = Math.round(amount * rate) / 100;
+      if (commission > 0) records.push({ id: crypto.randomUUID(), sourceId: row.id, date: row.date, type: "expense", category, expenseKind: "commission", amount: commission, note: `平台抽成｜抽成 ${rate}%（原始營業額 ${money(amount)}）`, platform: category, created: created + 1 });
+      row.platform = category;
+    }
+    save(); e.target.reset(); $("date").value = localDate; updateCategories(); render();
+    showToast(type === "income" && platforms.includes(category) ? "收入與平台抽成已記錄" : "記帳完成");
+  });
+  $("rows").addEventListener("click", e => {
+    const id = e.target.dataset.delete;
+    if (!id || !confirm("確定刪除這筆記帳資料？")) return;
+    const target = records.find(r => r.id === id);
+    records = records.filter(r => r.id !== id);
+    if (target && target.allocationId) records = records.filter(r => r.allocationId !== target.allocationId);
+    if (target && target.type === "income" && platforms.includes(target.category)) {
+      records = records.filter(r => r.sourceId !== target.id);
+    }
+    save(); render(); showToast("資料已刪除");
+  });
+  function downloadCsv(filename, rows) {
+    const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+  }
+  $("exportFiltered").addEventListener("click", () => {
+    const list = filteredRecords();
+    const rows = [["日期","類型","分類","金額","平台","備註"], ...list.map(r => [r.date, r.type === "income" ? "收入" : "支出", r.category, r.amount, r.platform || "", r.note || ""])];
+    downloadCsv(`早餐記帳-篩選明細-${localDate}.csv`, rows);
+  });
+  $("exportSummary").addEventListener("click", () => {
+    const income = records.filter(r => r.type === "income").reduce((s,r) => s + r.amount, 0);
+    const expense = records.filter(r => r.type === "expense").reduce((s,r) => s + r.amount, 0);
+    const totals = new Map();
+    records.forEach(r => {
+      const total = totals.get(r.category) || { income: 0, expense: 0 };
+      total[r.type] += r.amount;
+      totals.set(r.category, total);
+    });
+    const rows = [["項目","收入總額","支出總額","結餘"],["累積總結餘",income,expense,income-expense],["分類","收入總額","支出總額","分類結餘"]];
+    [...totals.entries()].sort(([a],[b]) => a.localeCompare(b, "zh-Hant")).forEach(([category,total]) => rows.push([category,total.income,total.expense,total.income-total.expense]));
+    downloadCsv(`早餐記帳-累積總結餘-${localDate}.csv`, rows);
+  });
+  updateCategories(); syncSettings(); setMonthFilters($("month").value); render();
+})();
+</script>
+</body>
+</html>
