@@ -49,6 +49,13 @@
       .forms,.filters,.platform .fields{grid-template-columns:1fr}
       .forms button{grid-column:auto}
     }
+    /* ===== 分類管理 ===== */
+    .cat-group{margin-top:14px}.cat-group h3{font-size:14px;margin:0 0 8px;color:var(--muted)}
+    .chips{display:flex;flex-wrap:wrap;gap:8px}
+    .chip{display:inline-flex;align-items:center;gap:4px;background:#edf1e9;border:1px solid var(--line);border-radius:999px;padding:5px 6px 5px 12px;font-size:14px}
+    .chip.system{background:#f3f3f0;color:var(--muted);padding-right:12px}
+    .chip button{background:none;color:var(--muted);padding:0 6px;height:24px;min-width:24px;font-size:14px;line-height:1}
+    .chip button:hover{color:var(--red)}
     /* ===== 雲端同步 / 登入 ===== */
     [hidden]{display:none!important}
     header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
@@ -112,6 +119,17 @@
       <div class="platform"><h3>FOODPANDA</h3><div class="fields"><div><label for="foodpandaRate">抽成率（%）</label><input id="foodpandaRate" type="number" min="0" max="100" step="0.01"></div><div><label for="foodpandaMonthly">月費（元）</label><input id="foodpandaMonthly" type="number" min="0" step="0.01"></div></div></div>
     </div>
     <p class="hint">設定房租金額與生效月份後，該月份起會自動在明細新增房租支出；不同月份依各自生效的設定計算，已登記的歷史明細不會因調整而改變。</p>
+  </section>
+  <section class="panel">
+    <h2>分類管理</h2>
+    <form class="forms" id="categoryForm">
+      <div><label for="newCategoryType">類型</label><select id="newCategoryType"><option value="expense">支出</option><option value="income">收入</option></select></div>
+      <div><label for="newCategoryName">新分類名稱</label><input id="newCategoryName" maxlength="20" placeholder="例如：蛋商" required></div>
+      <button type="submit">新增分類</button>
+    </form>
+    <div class="cat-group"><h3>收入分類</h3><div class="chips" id="incomeCategoryList"></div></div>
+    <div class="cat-group"><h3>支出分類</h3><div class="chips" id="expenseCategoryList"></div></div>
+    <p class="hint">點分類旁的 ✕ 可移除；已記錄的明細不受影響。灰色的分類為系統使用（平台、房租、水電、其他），不能移除。也可以直接在 Google 試算表的「設定」分頁新增。</p>
   </section>
   <section class="panel">
     <h2>水電帳單分攤</h2>
@@ -306,8 +324,8 @@ window.Cloud = (() => {
 </script>
 <script>
 (async () => {
-  const incomeCategories = ["營業額", "UBER", "FOODPANDA", "廢油回收"];
-  const expenseCategories = ["宜富冷凍", "地球商行", "瑞廣商行", "聯線麵包", "豆老爺", "福郁批發", "勝興批發", "開元食品", "薪資", "其他", "緯利餐具", "UBER", "FOODPANDA", "房租", "水費", "電費"];
+  const SYSTEM_CATEGORIES = { income: ["UBER", "FOODPANDA"], expense: ["UBER", "FOODPANDA", "房租", "水費", "電費", "其他"] };
+  const DEFAULT_CATEGORIES = { income: ["營業額", "UBER", "FOODPANDA", "廢油回收"], expense: ["宜富冷凍", "地球商行", "瑞廣商行", "聯線麵包", "豆老爺", "福郁批發", "勝興批發", "開元食品", "薪資", "其他", "緯利餐具", "UBER", "FOODPANDA", "房租", "水費", "電費"] };
   const platforms = ["UBER", "FOODPANDA"];
   const $ = id => document.getElementById(id);
   const today = new Date();
@@ -341,6 +359,12 @@ window.Cloud = (() => {
     }
     s.rent = Number(s.rent) || 0;
     s.rentEffectiveMonth = s.rentEffectiveMonth || localDate.slice(0, 7);
+    const cats = s.categories && typeof s.categories === "object" ? s.categories : {};
+    s.categories = {};
+    ["income", "expense"].forEach(t => {
+      const list = Array.isArray(cats[t]) && cats[t].length ? cats[t] : DEFAULT_CATEGORIES[t];
+      s.categories[t] = [...new Set([...list.map(c => String(c).trim()).filter(Boolean), ...SYSTEM_CATEGORIES[t]])];
+    });
     return s;
   };
   let settings = normalizeSettings(load("breakfast-ledger-settings", null));
@@ -366,8 +390,10 @@ window.Cloud = (() => {
   if (migratedRecords) save();
   const money = n => "$" + Number(n).toLocaleString("zh-TW", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   function updateCategories() {
-    const categories = $("type").value === "income" ? incomeCategories : expenseCategories;
-    $("category").innerHTML = categories.map(c => `<option>${c}</option>`).join("");
+    const current = $("category").value;
+    const categories = settings.categories[$("type").value];
+    $("category").innerHTML = categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("") + '<option value="__new__">＋ 新增分類…</option>';
+    if (categories.includes(current)) $("category").value = current;
     updateNoteRequirement();
     updatePreview();
   }
@@ -394,6 +420,7 @@ window.Cloud = (() => {
       $(p.toLowerCase() + "Rate").value = settings[p].rate;
       $(p.toLowerCase() + "Monthly").value = settings[p].monthly;
     });
+    updateCategories(); renderCategoryManager();
   }
   function setMonthFilters(month) {
     if (!month) return;
@@ -412,7 +439,7 @@ window.Cloud = (() => {
   }
   function updateFilterCategories() {
     const selected = $("filterCategory").value;
-    const categories = [...new Set([...incomeCategories, ...expenseCategories, ...records.map(r => r.category)])];
+    const categories = [...new Set([...settings.categories.income, ...settings.categories.expense, ...records.map(r => r.category)])];
     $("filterCategory").innerHTML = '<option value="">全部分類</option>' + categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
     $("filterCategory").value = categories.includes(selected) ? selected : "";
   }
@@ -452,7 +479,7 @@ window.Cloud = (() => {
       total[r.type] += r.amount;
       totals.set(r.category, total);
     });
-    const categories = [...new Set([...incomeCategories, ...expenseCategories, ...totals.keys()])];
+    const categories = [...new Set([...settings.categories.income, ...settings.categories.expense, ...totals.keys()])];
     $("statsRows").innerHTML = categories.map(category => {
       const total = totals.get(category) || { income: 0, expense: 0 };
       return `<tr><td>${escapeHtml(category)}</td><td class="amount income">${money(total.income)}</td><td class="amount expense">${money(total.expense)}</td><td class="amount">${money(total.income-total.expense)}</td></tr>`;
@@ -590,6 +617,7 @@ window.Cloud = (() => {
     const settingRows = [["設定項目", "數值"],
       ...platforms.flatMap(p => [[`${p} 抽成率（%）`, Number(settings[p].rate) || 0], [`${p} 月費（元）`, Number(settings[p].monthly) || 0]]),
       ["房租生效月份", settings.rentEffectiveMonth || ""], [],
+      ["收入分類", settings.categories.income.join("、")], ["支出分類", settings.categories.expense.join("、")], [],
       ["房租排程生效月份", "每月房租（元）"], ...settings.rentSchedule.map(i => [i.month, Number(i.amount) || 0])];
     const wb = XLSX.utils.book_new();
     const add = (rows, name, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws["!cols"] = widths.map(wch => ({ wch })); XLSX.utils.book_append_sheet(wb, ws, name); };
@@ -671,6 +699,10 @@ window.Cloud = (() => {
         if (Number.isFinite(rate) && rate >= 0 && rate <= 100) { s[p].rate = rate; found = true; }
         if (Number.isFinite(monthly) && monthly >= 0) { s[p].monthly = monthly; found = true; }
       });
+      ["income", "expense"].forEach(t => {
+        const text = map.get(t === "income" ? "收入分類" : "支出分類");
+        if (!blankCell(text)) { s.categories[t] = String(text).split(/[、,，]/).map(c => c.trim()).filter(Boolean); found = true; }
+      });
       const effective = cellToDate(map.get("房租生效月份"), false);
       if (effective) s.rentEffectiveMonth = effective;
       const scheduleAt = srows.findIndex(r => String(r[0]).trim() === "房租排程生效月份");
@@ -706,7 +738,48 @@ window.Cloud = (() => {
     save(); syncSettings(); updatePreview(); render();
     showToast(`已匯入 ${list.length} 筆明細`);
   });
-  updateCategories(); syncSettings(); setMonthFilters($("month").value); render();
+  /* ===== 分類管理 ===== */
+  function renderCategoryManager() {
+    ["income", "expense"].forEach(t => {
+      $(t + "CategoryList").innerHTML = settings.categories[t].map(c => SYSTEM_CATEGORIES[t].includes(c)
+        ? `<span class="chip system">${escapeHtml(c)}</span>`
+        : `<span class="chip">${escapeHtml(c)}<button type="button" data-remove-cat="${escapeHtml(c)}" data-cat-type="${t}" aria-label="移除 ${escapeHtml(c)}">✕</button></span>`).join("");
+    });
+  }
+  function addCategory(type, name) {
+    name = String(name || "").trim();
+    if (!name) return false;
+    if (name === "__new__" || name.length > 20) { alert("分類名稱請在 20 字以內。"); return false; }
+    if (settings.categories[type].includes(name)) { alert(`「${name}」已經在${type === "income" ? "收入" : "支出"}分類裡了。`); return false; }
+    settings.categories[type].push(name);
+    save(); updateCategories(); updateFilterCategories(); renderCategoryManager();
+    showToast(`已新增分類「${name}」`);
+    return true;
+  }
+  $("categoryForm").addEventListener("submit", e => {
+    e.preventDefault();
+    if (addCategory($("newCategoryType").value, $("newCategoryName").value)) $("newCategoryName").value = "";
+  });
+  document.addEventListener("click", e => {
+    const btn = e.target.closest("[data-remove-cat]");
+    if (!btn) return;
+    const type = btn.dataset.catType, name = btn.dataset.removeCat;
+    if (!confirm(`確定移除${type === "income" ? "收入" : "支出"}分類「${name}」？已記錄的明細不受影響。`)) return;
+    settings.categories[type] = settings.categories[type].filter(c => c !== name);
+    save(); updateCategories(); renderCategoryManager();
+  });
+  let lastCategory = "";
+  $("category").addEventListener("focus", () => { lastCategory = $("category").value; });
+  $("category").addEventListener("change", () => {
+    if ($("category").value !== "__new__") { lastCategory = $("category").value; return; }
+    const type = $("type").value;
+    const name = prompt(`新增${type === "income" ? "收入" : "支出"}分類名稱：`);
+    if (name && addCategory(type, name)) { $("category").value = name.trim(); lastCategory = name.trim(); }
+    else $("category").value = settings.categories[type].includes(lastCategory) ? lastCategory : settings.categories[type][0];
+    updateNoteRequirement(); updatePreview();
+  });
+
+  updateCategories(); syncSettings(); renderCategoryManager(); setMonthFilters($("month").value); render();
 })();
 </script>
 </body>
